@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Copyright (C) Citrix Systems Inc.
 #
@@ -21,15 +21,16 @@
 # 2. check if device can be passed through based on policy file
 # 3. return the device info to XAPI in json format
 
-from __future__ import print_function
+
 import abc
 import argparse
 import json
-import xcp.logger as log
 import logging
-import pyudev
 import re
 import sys
+
+import pyudev
+import xcp.logger as log
 
 
 def log_list(l):
@@ -63,7 +64,7 @@ class UsbObject(dict):
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, node):
-        super(UsbObject, self).__init__()
+        super().__init__()
         self.node = node
 
     def get_node(self):
@@ -111,7 +112,6 @@ class UsbObject(dict):
 
         :return: bool, if this belongs to a hub
         """
-        pass
 
     @abc.abstractmethod
     def is_child_of(self, parent):
@@ -120,7 +120,6 @@ class UsbObject(dict):
         :param parent:(UsbObject) the parent to check against
         :return:
         """
-        pass
 
     @staticmethod
     def validate_int(s, base=10):
@@ -159,7 +158,7 @@ class UsbDevice(UsbObject):
     _PRODUCT_DETAILS = [_VERSION, _ID_VENDOR, _ID_PRODUCT, _BCD_DEVICE, _SERIAL,
                         _CLASS, _CONF_VALUE, _NUM_INTERFACES, _USB_SPEED]
     _PROPS = _PRODUCT_DESC + _PRODUCT_DETAILS
-    _PROPS_NONABLE = _PRODUCT_DESC + [_SERIAL]
+    _PROPS_NONABLE = [*_PRODUCT_DESC, _SERIAL]
 
     def __init__(self, node, props1, props2):
         """ initialise UsbDevice, set node and properties
@@ -170,7 +169,7 @@ class UsbDevice(UsbObject):
         :param props2(pyudev.Device.attributes): device attributes, to get
         properties from sysfs
         """
-        super(UsbDevice, self).__init__(node)
+        super().__init__(node)
 
         for p in self._PRODUCT_DESC:
             if props1.get(p) is not None:
@@ -185,7 +184,7 @@ class UsbDevice(UsbObject):
         self.interfaces = set()
 
     def debug_str(self, level=0):
-        s = super(UsbDevice, self).debug_str(level)
+        s = super().debug_str(level)
         for i in self.interfaces:
             s += i.debug_str(level + 1)
         return s
@@ -203,7 +202,7 @@ class UsbDevice(UsbObject):
             if not self.validate_int(self[p]):
                 return False
 
-        return super(UsbDevice, self).is_initialized()
+        return super().is_initialized()
 
     def is_class_hub(self):
         return self._is_class_hub(self._CLASS)
@@ -267,14 +266,13 @@ class UsbInterface(UsbObject):
         :param props(pyudev.Device.attributes): device attributes, to get
         properties from sysfs
         """
-        super(UsbInterface, self).__init__(node)
+        super().__init__(node)
         for p in self._PROPS:
             if props.get(p) is not None:
                 self[p] = props.get(p)
 
     def debug_str(self, level=0):
-        s = super(UsbInterface, self).debug_str(level)
-        return s
+        return super().debug_str(level)
 
     def is_class_hub(self):
         return self._is_class_hub(self._CLASS)
@@ -287,7 +285,7 @@ class UsbInterface(UsbObject):
         for p in self._PROPS:
             if p not in self or not self.validate_int(self[p], 16):
                 return False
-        return super(UsbInterface, self).is_initialized()
+        return super().is_initialized()
 
     def is_child_of(self, parent):
         if isinstance(parent, UsbDevice) and parent.is_initialized():
@@ -318,7 +316,7 @@ def get_usb_info():
     return devices, interfaces
 
 
-class Policy(object):
+class Policy:
     """ Parse policy file, and check if a UsbDevice can be passed through
 
     Policy file spec reference:
@@ -359,13 +357,13 @@ class Policy(object):
         """
         self.rule_list = []
         try:
-            with open(self._PATH, "r") as f:
+            with open(self._PATH) as f:
                 log.debug("=== policy file begin")
                 for line in f:
                     log.debug(line[0:-1])
                     self.parse_line(line)
                 log.debug("=== policy file end")
-        except IOError as e:
+        except OSError as e:
             # without policy file, no device will be allowed to passed through
             log_exit("Caught error {}, policy file error".format(str(e)))
 
@@ -375,9 +373,9 @@ class Policy(object):
 
     def check_hex_length(self, name, value):
         if name in [self._CLASS, self._SUBCLASS, self._PROTOCOL]:
-            return 2 == len(value)
+            return len(value) == 2
         if name in [self._ID_VENDOR, self._ID_PRODUCT, self._BCD_DEVICE]:
-            return 4 == len(value)
+            return len(value) == 4
         return False
 
     @staticmethod
@@ -413,7 +411,7 @@ class Policy(object):
         # 2. split action and match field
         # ^\s*(ALLOW|DENY)\s*:\s*([^:]*)$
         try:
-            action, target = [part.strip() for part in line.split(":")]
+            action, target = (part.strip() for part in line.split(":"))
         except ValueError as e:
             if line.rstrip():
                 log_exit("Caught error {}, malformed line: {}"
@@ -435,20 +433,19 @@ class Policy(object):
         # 4. parse key=value pairs
         # pattern = r"\s*(class|subclass|prot|vid|pid|rel)\s*=\s*([0-9a-f]+)"
         last_end = 0
-        for matchNum, match in enumerate(re.finditer(self._PATTERN, target,
-                                                     re.IGNORECASE)):
-            if last_end != match.start():
-                self.parse_error(last_end, match.start(), target, line)
+        for _match in re.finditer(self._PATTERN, target, re.IGNORECASE):
+            if last_end != _match.start():
+                self.parse_error(last_end, _match.start(), target, line)
 
             try:
-                name, value = [part.lower() for part in match.groups()]
+                name, value = (part.lower() for part in _match.groups())
             # This can happen if `part` is None
             except AttributeError:
-                self.parse_error(match.start(), match.end(), target, line)
+                self.parse_error(_match.start(), _match.end(), target, line)
             # This should never happen, because the regexp has exactly two
             # matching groups
             except ValueError:
-                self.parse_error(match.start(), match.end(), target, line)
+                self.parse_error(_match.start(), _match.end(), target, line)
 
             if not self.check_hex_length(name, value):
                 log_exit("hex'{}' length error, malformed line {}".format(
@@ -459,7 +456,7 @@ class Policy(object):
                          format(name, line))
 
             rule[name] = value
-            last_end = match.end()
+            last_end = _match.end()
 
         if last_end != len(target):
             self.parse_error(last_end, len(target) + 1, target, line)
@@ -540,6 +537,7 @@ class Policy(object):
                     else:
                         log.debug("deny " + i.get_node())
                         return False
+
             if not allow_interface:
                 log.debug("deny " + i.get_node() + ", no matching rule")
                 return False
