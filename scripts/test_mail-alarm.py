@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 import unittest
-import mock
+from unittest import mock
 
 def nottest(obj):
     obj.__test__ = False

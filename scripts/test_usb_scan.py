@@ -2,11 +2,8 @@
 #
 # unittest for usb_scan.py
 
-try:
-    from collections.abc import Mapping, Container, Iterable
-except ImportError: # python2
-    from collections import Mapping, Container, Iterable
-import mock
+from collections.abc import Mapping, Container, Iterable
+from unittest import mock
 import os
 import shutil
 import sys

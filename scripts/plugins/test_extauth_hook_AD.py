@@ -5,7 +5,7 @@ Test module for extauth_hook_ad
 import sys
 import os
 from unittest import TestCase
-from mock import MagicMock, patch
+from unittest.mock import MagicMock, patch
 # mock modules to avoid dependencies
 sys.modules["XenAPIPlugin"] = MagicMock()
 sys.modules["XenAPI"] = MagicMock()
