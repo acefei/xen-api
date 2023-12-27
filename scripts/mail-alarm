@@ -20,9 +20,9 @@ import syslog
 import tempfile
 import traceback
 from socket import getfqdn
+from xml.dom.minidom import parseString
 
 import XenAPI
-from xml.dom.minidom import parseString
 from xcp import branding
 
 # Go read man ssmtp.conf
