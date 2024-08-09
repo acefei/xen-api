@@ -364,24 +364,25 @@ let canonicalise x =
   if not (Filename.is_relative x) then
     x
   else (* Search the PATH and XCP_PATH for the executable *)
-    let paths = split_c ':' (Sys.getenv "PATH") in
+    let paths =
+      (* Might be worth eliminating split_c function (used in a few
+         more places in this module and replacing it with
+         Astring.String.cuts since it's already imported in this module *)
+      split_c ':' (Option.value (Sys.getenv_opt "PATH") ~default:"")
+    in
     let first_hit =
-      List.fold_left
-        (fun found path ->
-          match found with
-          | Some _hit ->
-              found
-          | None ->
-              let possibility = Filename.concat path x in
-              if Sys.file_exists possibility then Some possibility else None
+      List.find_map
+        (fun path ->
+          let possibility = Filename.concat path x in
+          if Sys.file_exists possibility then Some possibility else None
         )
-        None
         (paths @ !extra_search_path)
     in
     match first_hit with
     | None ->
         warn "Failed to find %s on $PATH ( = %s) or search_path option ( = %s)"
-          x (Sys.getenv "PATH")
+          x
+          (Option.value (Sys.getenv_opt "PATH") ~default:"unset")
           (String.concat ":" !extra_search_path) ;
         x
     | Some hit ->
@@ -500,8 +501,8 @@ let http_handler call_of_string string_of_response process s =
   | `Invalid x ->
       debug "Failed to read HTTP request. Got: '%s'" x
   | `Ok req -> (
-    match (Cohttp.Request.meth req, Uri.path (Cohttp.Request.uri req)) with
-    | `POST, _ -> (
+    match Cohttp.Request.meth req with
+    | `POST -> (
         let headers = Cohttp.Request.headers req in
         match Cohttp.Header.get headers "content-length" with
         | None ->
@@ -534,7 +535,7 @@ let http_handler call_of_string string_of_response process s =
               (fun t -> Response.write_body t response_txt)
               response oc
       )
-    | _, _ ->
+    | _ ->
         let content_length = 0 in
         let headers =
           Cohttp.Header.of_list

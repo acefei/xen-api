@@ -3,9 +3,10 @@
  (public_name dbgring)
  (package xapi-xenopsd-xc)
  (libraries
-   dune-build-info
+   
    xapi-xenopsd
    xenctrl
+   xenmmap
    xenstore
    xenstore.unix
    xenstore_transport

@@ -71,7 +71,7 @@ let make_xen_livepatch_list () =
       )
       [] lines
   in
-  if List.length patches > 0 then Some (String.concat ", " patches) else None
+  if patches <> [] then Some (String.concat ", " patches) else None
 
 (** The format of the response looks like
  *  # kpatch list
@@ -104,7 +104,7 @@ let make_kpatch_list () =
           loop acc started rest
   in
   let patches = loop [] false lines in
-  if List.length patches > 0 then Some (String.concat ", " patches) else None
+  if patches <> [] then Some (String.concat ", " patches) else None
 
 (** [count_cpus] returns the number of CPUs found in /proc/cpuinfo *)
 let count_cpus () =
@@ -435,7 +435,8 @@ let create_root_user ~__context =
     Db.User.create ~__context ~ref ~fullname ~short_name ~uuid ~other_config:[]
 
 let get_xapi_verstring () =
-  Printf.sprintf "%d.%d" Constants.version_major Constants.version_minor
+  Printf.sprintf "%d.%d" Xapi_version.xapi_version_major
+    Xapi_version.xapi_version_minor
 
 (** Create assoc list of Supplemental-Pack information.
  *  The package information is taking from the [XS-REPOSITORY] XML file in the package

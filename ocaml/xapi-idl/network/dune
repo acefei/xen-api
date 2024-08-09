@@ -10,6 +10,7 @@
    threads.posix
    xapi-idl
    xapi-log
+   ipaddr
  )
  (wrapped false)
  (preprocess (pps ppx_deriving_rpc)))
@@ -20,7 +21,7 @@
  (modules network_cli)
  (libraries
    cmdliner
-   dune-build-info
+   
    rpclib.cmdliner
    rpclib.core
    rpclib.markdown

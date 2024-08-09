@@ -164,36 +164,7 @@ let register_callback_fns () =
     Api_server.callback1 false req sock xml
   in
   Xapi_cli.rpc_fun := Some fake_rpc ;
-  let set_stunnelpid _task_opt pid =
-    Locking_helpers.Thread_state.acquired
-      (Locking_helpers.Process ("stunnel", pid))
-  in
-  let unset_stunnelpid _task_opt pid =
-    Locking_helpers.Thread_state.released
-      (Locking_helpers.Process ("stunnel", pid))
-  in
-  let stunnel_destination_is_ok addr =
-    Server_helpers.exec_with_new_task "check_stunnel_destination"
-      (fun __context ->
-        let hosts =
-          Db.Host.get_refs_where ~__context
-            ~expr:(Eq (Field "address", Literal addr))
-        in
-        match hosts with
-        | [host] -> (
-          try
-            Message_forwarding.check_live ~__context host ;
-            true
-          with _ -> false
-        )
-        | _ ->
-            true
-    )
-  in
-  Xmlrpc_client.Internal.set_stunnelpid_callback := Some set_stunnelpid ;
-  Xmlrpc_client.Internal.unset_stunnelpid_callback := Some unset_stunnelpid ;
-  Xmlrpc_client.Internal.destination_is_ok := Some stunnel_destination_is_ok ;
-  TaskHelper.init ()
+  Message_forwarding.register_callback_fns ()
 
 let noevents = ref false
 
@@ -930,12 +901,20 @@ let report_tls_verification ~__context =
   let value = Stunnel_client.get_verify_by_default () in
   Db.Host.set_tls_verification_enabled ~__context ~self ~value
 
+let test_open count =
+  if count > 0 then (
+    debug "%s: opening %d file descriptors" __FUNCTION__ count ;
+    Xapi_stdext_unix.Unixext.test_open count ;
+    debug "%s: opened %d files" __FUNCTION__ count
+  )
+
 let server_init () =
   let print_server_starting_message () =
     debug "(Re)starting xapi, pid: %d" (Unix.getpid ()) ;
     debug "on_system_boot=%b pool_role=%s" !Xapi_globs.on_system_boot
       (Pool_role.string_of (Pool_role.get_role ()))
   in
+  test_open !Xapi_globs.test_open ;
   Unixext.unlink_safe "/etc/xensource/boot_time_info_updated" ;
   (* Record the initial value of Master_connection.connection_timeout and set it to 'never'. When we are a slave who
      has just started up we want to wait forever for the master to appear. (See CA-25481) *)
@@ -1045,7 +1024,8 @@ let server_init () =
       while not !Xapi_globs.event_hook_auth_on_xapi_initialize_succeeded do
         try
           (* try to initialize external authentication service *)
-          (Ext_auth.d ()).on_xapi_initialize !Xapi_globs.on_system_boot ;
+          (Ext_auth.d ()).on_xapi_initialize ~__context
+            !Xapi_globs.on_system_boot ;
           (* tell everybody the service initialized successfully *)
           Xapi_globs.event_hook_auth_on_xapi_initialize_succeeded := true ;
           (* 3. Now that we are sure that the external authentication service is working,*)
@@ -1533,12 +1513,11 @@ let delay_on_eintr f =
       Backtrace.is_important e ; raise e
 
 let watchdog f =
-  if !Xapi_globs.nowatchdog then (
-    try
-      ignore (Unix.sigprocmask Unix.SIG_UNBLOCK [Sys.sigint]) ;
-      delay_on_eintr f ;
-      exit 127
-    with e ->
-      Debug.log_backtrace e (Backtrace.get e) ;
-      exit 2
-  )
+  let run () =
+    ignore (Unix.sigprocmask Unix.SIG_UNBLOCK [Sys.sigint]) ;
+    delay_on_eintr f ;
+    exit 127
+  in
+  if !Xapi_globs.nowatchdog then
+    (* backtrace already logged by the Debug module, so ignore the exception here *)
+    try Debug.with_thread_associated __FUNCTION__ run () with _ -> exit 2

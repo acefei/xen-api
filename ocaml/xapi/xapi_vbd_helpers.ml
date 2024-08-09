@@ -60,6 +60,9 @@ let valid_operations ~expensive_sharing_checks ~__context record _ref' : table =
       (ops : API.vbd_operations_set) =
     List.iter
       (fun op ->
+        (* Exception can't be raised since the hash table is
+           pre-filled for all_ops, and set_errors is applied
+           to a subset of all_ops *)
         if Hashtbl.find table op = None then
           Hashtbl.replace table op (Some (code, params))
       )
@@ -296,21 +299,21 @@ let valid_operations ~expensive_sharing_checks ~__context record _ref' : table =
   table
 
 let throw_error (table : table) op =
-  if not (Hashtbl.mem table op) then
-    raise
-      (Api_errors.Server_error
-         ( Api_errors.internal_error
-         , [
-             Printf.sprintf
-               "xapi_vbd_helpers.assert_operation_valid unknown operation: %s"
-               (vbd_operation_to_string op)
-           ]
-         )
-      ) ;
-  match Hashtbl.find table op with
-  | Some (code, params) ->
-      raise (Api_errors.Server_error (code, params))
+  match Hashtbl.find_opt table op with
   | None ->
+      raise
+        (Api_errors.Server_error
+           ( Api_errors.internal_error
+           , [
+               Printf.sprintf
+                 "xapi_vbd_helpers.assert_operation_valid unknown operation: %s"
+                 (vbd_operation_to_string op)
+             ]
+           )
+        )
+  | Some (Some (code, params)) ->
+      raise (Api_errors.Server_error (code, params))
+  | Some None ->
       ()
 
 let assert_operation_valid ~__context ~self ~(op : API.vbd_operations) =
@@ -373,38 +376,17 @@ let clear_current_operations ~__context ~self =
 
 (** Check if the device string has the right form *)
 let valid_device dev ~_type =
-  let check_rest rest =
-    (* checks the rest of the device name = [] is ok, or a number is ok *)
-    if rest = [] then
-      true
-    else
-      try
-        ignore (int_of_string (String.implode rest)) ;
-        true
-      with _ -> false
-  in
   dev = "autodetect"
+  || Option.is_none (Device_number.of_string dev ~hvm:false)
   ||
-  match String.explode dev with
-  | 's' :: 'd' :: 'a' .. 'p' :: rest ->
-      check_rest rest
-  | 'x' :: 'v' :: 'd' :: 'a' .. 'p' :: rest ->
-      check_rest rest
-  | 'h' :: 'd' :: 'a' .. 'p' :: rest ->
-      check_rest rest
-  | 'f' :: 'd' :: 'a' .. 'b' :: rest ->
-      check_rest rest
-      (* QEMU only supports up to 2 floppy drives, hence fda or fdb *)
+  match _type with
+  | `Floppy ->
+      false
   | _ -> (
-    match _type with
-    | `Floppy ->
-        false
-    | _ -> (
-      try
-        let n = int_of_string dev in
-        n >= 0 || n < 16
-      with _ -> false
-    )
+    try
+      let n = int_of_string dev in
+      n >= 0 || n < 16
+    with _ -> false
   )
 
 (** VBD.destroy doesn't require any interaction with xen *)

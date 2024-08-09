@@ -6,7 +6,7 @@
   (libraries
     astring
     cstruct
-    dune-build-info
+    
     ezxenstore.core
     inotify
     mtime
@@ -20,6 +20,7 @@
     xapi-idl.rrd
     xapi-log
     xapi-rrd
+    xapi-stdext-pervasives
     xapi-stdext-std
     xapi-stdext-threads
     xapi-stdext-unix

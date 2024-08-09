@@ -11,10 +11,12 @@
     (language c)
     (names xxhash_stubs)
   )
+  (modes best)
   (name xxhash)
   (wrapped false)
   (libraries
     ctypes
+    ctypes.stubs
     integers
     xxhash_bindings
     xapi-stdext-pervasives

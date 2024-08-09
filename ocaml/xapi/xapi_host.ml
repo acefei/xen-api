@@ -123,7 +123,7 @@ let bugreport_upload ~__context ~host:_ ~url ~options =
     if List.mem_assoc "http_proxy" options then
       List.assoc "http_proxy" options
     else
-      try Unix.getenv "http_proxy" with _ -> ""
+      Option.value (Sys.getenv_opt "http_proxy") ~default:""
   in
   let cmd =
     Printf.sprintf "%s %s %s"
@@ -199,7 +199,7 @@ let assert_bacon_mode ~__context ~host =
     |> List.flatten
     |> List.filter (fun self -> Db.VBD.get_currently_attached ~__context ~self)
   in
-  if List.length control_domain_vbds > 0 then
+  if control_domain_vbds <> [] then
     raise
       (Api_errors.Server_error
          ( Api_errors.host_in_use
@@ -1093,7 +1093,7 @@ let destroy ~__context ~self =
   if Db.Pool.get_ha_enabled ~__context ~self:pool then
     raise (Api_errors.Server_error (Api_errors.ha_is_enabled, [])) ;
   let my_control_domains, my_regular_vms = get_resident_vms ~__context ~self in
-  if List.length my_regular_vms > 0 then
+  if my_regular_vms <> [] then
     raise
       (Api_errors.Server_error
          (Api_errors.host_has_resident_vms, [Ref.string_of self])
@@ -1109,7 +1109,7 @@ let destroy ~__context ~self =
   Db.Host.destroy ~__context ~self ;
   Create_misc.create_pool_cpuinfo ~__context ;
   List.iter (fun vm -> Db.VM.destroy ~__context ~self:vm) my_control_domains ;
-  Pool_features.update_pool_features ~__context
+  Pool_features_helpers.update_pool_features ~__context
 
 let declare_dead ~__context ~host =
   precheck_destroy_declare_dead ~__context ~self:host "declare_dead" ;
@@ -1778,7 +1778,7 @@ let enable_external_auth ~__context ~host ~config ~service_name ~auth_type =
 
           (* use the special 'named dispatcher' function to call an extauth plugin function even though we have *)
           (* not yet set up the external_auth_type value that will enable generic access to the extauth plugin. *)
-          (Ext_auth.nd auth_type).on_enable config ;
+          (Ext_auth.nd auth_type).on_enable ~__context config ;
 
           (* from this point on, we have successfully enabled the external authentication services. *)
 
@@ -1891,7 +1891,7 @@ let disable_external_auth_common ?(during_pool_eject = false) ~__context ~host
         (* 1. first, we try to call the external auth plugin to disable the external authentication service *)
         let plugin_disable_failure =
           try
-            (Ext_auth.d ()).on_disable config ;
+            (Ext_auth.d ()).on_disable ~__context config ;
             None (* OK, on_disable succeeded *)
           with
           | Auth_signature.Auth_service_error (errtag, msg) ->
@@ -2025,7 +2025,7 @@ let copy_license_to_db ~__context ~host:_ ~features ~additional =
 
 let set_license_params ~__context ~self ~value =
   Db.Host.set_license_params ~__context ~self ~value ;
-  Pool_features.update_pool_features ~__context
+  Pool_features_helpers.update_pool_features ~__context
 
 let apply_edition_internal ~__context ~host ~edition ~additional =
   (* Get localhost's current license state. *)

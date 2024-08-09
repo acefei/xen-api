@@ -76,6 +76,14 @@ module List = struct
     in
     loop 0 list
 
+  let rec last = function
+    | [] ->
+        invalid_arg "last: empty list"
+    | [x] ->
+        x
+    | _ :: xs ->
+        last xs
+
   let sub i j l = drop i l |> take (j - max i 0)
 
   let rec chop i l =
@@ -200,4 +208,15 @@ module List = struct
   let find_minimum compare =
     let min a b = if compare a b <= 0 then a else b in
     function [] -> None | x :: xs -> Some (List.fold_left min x xs)
+
+  let find_index f l =
+    let rec loop i = function
+      | [] ->
+          None
+      | x :: _ when f x ->
+          Some i
+      | _ :: xs ->
+          loop (i + 1) xs
+    in
+    loop 0 l
 end

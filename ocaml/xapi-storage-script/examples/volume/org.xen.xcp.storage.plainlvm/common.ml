@@ -126,9 +126,13 @@ let canonicalise x =
   if not (Filename.is_relative x) then
     x
   else (* Search the PATH and XCP_PATH for the executable *)
-    let paths = Re_str.split colon (Sys.getenv "PATH") in
+    let paths =
+      Re_str.split colon (Option.value (Sys.getenv_opt "PATH") ~default:"")
+    in
     let xen_paths =
-      try Re_str.split colon (Sys.getenv "XCP_PATH") with _ -> []
+      try
+        Re_str.split colon (Option.value (Sys.getenv_opt "XCP_PATH") ~default:"")
+      with _ -> []
     in
     let first_hit =
       List.fold_left
@@ -148,8 +152,8 @@ let canonicalise x =
     match first_hit with
     | None ->
         warn "Failed to find %s on $PATH ( = %s) or $XCP_PATH ( = %s)" x
-          (Sys.getenv "PATH")
-          (try Sys.getenv "XCP_PATH" with Not_found -> "unset") ;
+          (Option.value (Sys.getenv_opt "PATH") ~default:"unset")
+          (Option.value (Sys.getenv_opt "XCP_PATH") ~default:"unset") ;
         x
     | Some hit ->
         hit
@@ -329,7 +333,7 @@ let vg_of_uri uri =
   let uri' = Uri.of_string uri in
   match Uri.scheme uri' with
   | Some "vg" ->
-      let vg = Uri.path uri' in
+      let vg = Uri.path_unencoded uri' in
       if vg <> "" && vg.[0] = '/' then
         String.sub vg 1 (String.length vg - 1)
       else

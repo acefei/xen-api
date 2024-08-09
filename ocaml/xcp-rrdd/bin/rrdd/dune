@@ -5,7 +5,7 @@
   (modules (:standard \ xcp_rrdd))
   (libraries
     astring
-    dune-build-info
+    
     ezxenstore
     gzip
     http_lib
@@ -31,8 +31,8 @@
     xapi-stdext-threads
     xapi-stdext-unix
     xmlm
+    yojson
   )
-  (preprocess (pps ppx_deriving_rpc))
 )
 
 (executable
@@ -43,11 +43,12 @@
   (modules xcp_rrdd)
   (libraries
     astring
-    dune-build-info
+    
     ezxenstore.core
     ezxenstore.watch
     forkexec
     http_lib
+    httpsvr
     inotify
     rpclib.core
     rpclib.json

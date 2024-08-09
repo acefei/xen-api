@@ -409,7 +409,7 @@ let remove_from_progress_map id =
 
 let get_progress_map id =
   with_lock progress_map_m (fun () ->
-      try Hashtbl.find progress_map_tbl id with _ -> fun x -> x
+      Option.value (Hashtbl.find_opt progress_map_tbl id) ~default:Fun.id
   )
 
 let register_mirror __context mid =
@@ -558,8 +558,17 @@ let of_vbd ~__context ~vbd ~domid =
     Helpers.has_qemu ~__context ~self:(Db.VBD.get_VM ~__context ~self:vbd)
   in
   let dbg = Context.get_task_id __context in
-  let device_number = Device_number.of_string has_qemu userdevice in
-  let device = Device_number.to_linux_device device_number in
+  let device =
+    Option.map Device_number.to_linux_device
+      (Device_number.of_string ~hvm:has_qemu userdevice)
+  in
+  let device =
+    match device with
+    | Some dev ->
+        dev
+    | None ->
+        raise Api_errors.(Server_error (invalid_device, [userdevice]))
+  in
   let dp = datapath_of_vbd ~domid ~device in
   ( rpc
   , Ref.string_of dbg

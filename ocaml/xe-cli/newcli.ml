@@ -135,7 +135,7 @@ let parse_url url =
     let ( let* ) = Option.bind in
     let* scheme = Uri.scheme uri in
     let* host = Uri.host uri in
-    let path = Uri.path_and_query uri in
+    let path = Uri.path_and_query uri |> Uri.pct_decode in
     Some (scheme, host, path)
   in
   match parse (Uri.of_string url) with
@@ -280,7 +280,9 @@ let parse_args =
         (List.filter (fun (k, v) -> not (set_keyword (k, v))) rcs)
     in
     let extras =
-      let extra_args = try Sys.getenv "XE_EXTRA_ARGS" with Not_found -> "" in
+      let extra_args =
+        Option.value (Sys.getenv_opt "XE_EXTRA_ARGS") ~default:""
+      in
       let l = ref [] and pos = ref 0 and i = ref 0 in
       while !pos < String.length extra_args do
         if extra_args.[!pos] = ',' then (
@@ -477,14 +479,6 @@ let main_loop ifd ofd permitted_filenames =
   marshal_protocol ofd ;
   let exit_code = ref None in
   while !exit_code = None do
-    (* Wait for input asynchronously so that we can check the status
-       of Stunnel every now and then, for better debug/dignosis.
-    *)
-    while
-      match Unix.select [ifd] [] [] 5.0 with _ :: _, _, _ -> false | _ -> true
-    do
-      ()
-    done ;
     let cmd = try unmarshal ifd with e -> handle_unmarshal_failure e ifd in
     debug "Read: %s\n%!" (string_of_message cmd) ;
     flush stderr ;
@@ -647,7 +641,7 @@ let main_loop ifd ofd permitted_filenames =
           with
           | Unix.Unix_error (_, _, _)
             when !delay <= long_connection_retry_timeout ->
-              ignore (Unix.select [] [] [] !delay) ;
+              Unix.sleepf !delay ;
               delay := !delay *. 2. ;
               keep_connection ()
           | e ->
@@ -811,7 +805,7 @@ let main () =
       let args, traceparent = parse_args args in
       (* All the named args are taken as permitted filename to be uploaded *)
       let permitted_filenames = get_permit_filenames args in
-      if List.length args < 1 then
+      if args = [] then
         raise Usage
       else
         with_open_channels @@ fun (ic, oc) ->

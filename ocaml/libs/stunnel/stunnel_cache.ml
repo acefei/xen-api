@@ -37,11 +37,7 @@ let ignore_log fmt = Printf.ksprintf (fun _ -> ()) fmt
 (* Use and overlay the definition from D. *)
 let debug = if debug_enabled then debug else ignore_log
 
-type endpoint = {
-    host: string
-  ; port: int
-  ; verified: Stunnel.verification_config option
-}
+type endpoint = {host: string; port: int}
 
 (* Need to limit the absolute number of stunnels as well as the maximum age *)
 let max_stunnel = 70
@@ -74,10 +70,13 @@ let unlocked_gc () =
   ( if debug_enabled then
       let now = Unix.gettimeofday () in
       let string_of_id id =
-        let stunnel = Tbl.find !stunnels id in
-        Printf.sprintf "(id %s / idle %.2f age %.2f)" (id_of_stunnel stunnel)
-          (now -. Hashtbl.find !times id)
-          (now -. stunnel.Stunnel.connected_time)
+        match (Tbl.find !stunnels id, Hashtbl.find_opt !times id) with
+        | Some stunnel, Some stunnel_id ->
+            Printf.sprintf "(id %s / idle %.2f age %.2f)"
+              (id_of_stunnel stunnel) (now -. stunnel_id)
+              (now -. stunnel.Stunnel.connected_time)
+        | _ ->
+            Printf.sprintf "%s: found no entry for id=%d" __FUNCTION__ id
       in
       let string_of_endpoint ep = Printf.sprintf "%s:%d" ep.host ep.port in
       let string_of_index ep xs =
@@ -134,11 +133,15 @@ let unlocked_gc () =
     let oldest_ids = List.map fst oldest in
     List.iter
       (fun x ->
-        let stunnel = Tbl.find !stunnels x in
-        debug
-          "Expiring stunnel id %s since we have too many cached tunnels (limit \
-           is %d)"
-          (id_of_stunnel stunnel) max_stunnel
+        match Tbl.find !stunnels x with
+        | Some stunnel ->
+            debug
+              "Expiring stunnel id %s since we have too many cached tunnels \
+               (limit is %d)"
+              (id_of_stunnel stunnel) max_stunnel
+        | None ->
+            debug "%s: Couldn't find an expiring stunnel (id=%d) in the table"
+              __FUNCTION__ x
       )
       oldest_ids ;
     to_gc := !to_gc @ oldest_ids
@@ -146,8 +149,8 @@ let unlocked_gc () =
   (* Disconnect all stunnels we wish to GC *)
   List.iter
     (fun id ->
-      let s = Tbl.find !stunnels id in
-      Stunnel.disconnect s
+      (* Only remove stunnel if we find it in the table *)
+      Option.iter (fun s -> Stunnel.disconnect s) (Tbl.find !stunnels id)
     )
     !to_gc ;
   (* Remove all reference to them from our cache hashtables *)
@@ -180,19 +183,8 @@ let add (x : Stunnel.t) =
       incr counter ;
       Hashtbl.add !times idx now ;
       Tbl.move_into !stunnels idx x ;
-      let ep =
-        {
-          host= x.Stunnel.host
-        ; port= x.Stunnel.port
-        ; verified= x.Stunnel.verified
-        }
-      in
-      let existing =
-        if Hashtbl.mem !index ep then
-          Hashtbl.find !index ep
-        else
-          []
-      in
+      let ep = {host= x.Stunnel.host; port= x.Stunnel.port} in
+      let existing = Option.value (Hashtbl.find_opt !index ep) ~default:[] in
       Hashtbl.replace !index ep (idx :: existing) ;
       debug "Adding stunnel id %s (idle %.2f) to the cache" (id_of_stunnel x) 0. ;
       unlocked_gc ()
@@ -201,28 +193,38 @@ let add (x : Stunnel.t) =
 (** Returns an Stunnel.t for this endpoint (oldest first), raising Not_found
     if none can be found. First performs a garbage-collection, which discards
     expired stunnels if needed. *)
-let with_remove ~host ~port verified f =
-  let ep = {host; port; verified} in
+let with_remove ~host ~port f =
+  let ep = {host; port} in
   let get_id () =
     with_lock m (fun () ->
         unlocked_gc () ;
-        let ids = Hashtbl.find !index ep in
-        let table = List.map (fun id -> (id, Hashtbl.find !times id)) ids in
+        let ( let* ) = Option.bind in
+        let* ids = Hashtbl.find_opt !index ep in
+        let table =
+          List.filter_map
+            (fun id ->
+              Option.map (fun time -> (id, time)) (Hashtbl.find_opt !times id)
+            )
+            ids
+        in
         let sorted = List.sort (fun a b -> compare (snd a) (snd b)) table in
         match sorted with
         | (id, time) :: _ ->
-            let stunnel = Tbl.find !stunnels id in
-            debug "Removing stunnel id %s (idle %.2f) from the cache"
-              (id_of_stunnel stunnel)
-              (Unix.gettimeofday () -. time) ;
+            Option.iter
+              (fun stunnel ->
+                debug "Removing stunnel id %s (idle %.2f) from the cache"
+                  (id_of_stunnel stunnel)
+                  (Unix.gettimeofday () -. time)
+              )
+              (Tbl.find !stunnels id) ;
             Hashtbl.remove !times id ;
             Hashtbl.replace !index ep (List.filter (fun x -> x <> id) ids) ;
-            id
+            Some id
         | _ ->
-            raise Not_found
+            None
     )
   in
-  let id_opt = try Some (get_id ()) with Not_found -> None in
+  let id_opt = get_id () in
   id_opt
   |> Option.map @@ fun id ->
      (* cannot call while holding above mutex or we deadlock *)
@@ -241,7 +243,7 @@ let flush () =
 
 let with_connect ?use_fork_exec_helper ?write_to_log ~verify_cert ~host ~port f
     =
-  match with_remove ~host ~port verify_cert f with
+  match with_remove ~host ~port f with
   | Some r ->
       r
   | None ->

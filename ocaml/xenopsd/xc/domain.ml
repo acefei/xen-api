@@ -351,7 +351,7 @@ let make ~xc ~xs vm_info vcpus domain_config uuid final_uuid no_sharept =
   if iommu then
     assert_capability CAP_DirectIO ~on_error:(fun () -> "IOMMU unavailable") ;
   let nested_virt =
-    get_platform_key ~key:"nested_virt" ~default:false require_hvm
+    get_platform_key ~key:"nested-virt" ~default:false require_hvm
   in
   let vpmu = get_platform_key ~key:"vpmu" ~default:false (fun _ -> Ok ()) in
 
@@ -797,7 +797,7 @@ let destroy (task : Xenops_task.task_handle) ~xc ~xs ~qemu_domid ~vtpm ~dm domid
      cleanup. If there are any remaining domains with the same UUID, then zap
      only the hotplug tree for the destroyed domain. *)
   if failed_devices = [] then
-    if List.length other_domains < 1 then
+    if other_domains = [] then
       log_exn_rm ~xs (Device_common.get_private_path_by_uuid uuid)
     else
       log_exn_rm ~xs (Hotplug.get_hotplug_base_by_uuid uuid domid) ;

@@ -961,10 +961,7 @@ module HOST = struct
       get_lines () ;
       close_in in_chan ;
       let find key =
-        if Hashtbl.mem tbl key then
-          Hashtbl.find tbl key
-        else
-          "unknown"
+        Option.value (Hashtbl.find_opt tbl key) ~default:"unknown"
       in
       ( find "vendor_id"
       , find "model name"
@@ -3777,14 +3774,14 @@ module VBD = struct
             let qemu_domid = this_domid ~xs in
             let qemu_frontend =
               let maybe_create_vbd_frontend () =
-                let index = Device_number.to_disk_number device_number in
+                let index = Device_number.disk device_number in
                 match vbd.Vbd.backend with
                 | None ->
                     Some (index, Empty)
                 | Some _ ->
                     Some (index, create_vbd_frontend ~xc ~xs task qemu_domid vdi)
               in
-              match Device_number.spec device_number with
+              match (device_number :> Device_number.bus_type * int * int) with
               | Ide, n, _ when 0 <= n && n < 4 ->
                   maybe_create_vbd_frontend ()
               | Floppy, n, _ when 0 <= n && n < 2 ->

@@ -121,7 +121,6 @@ install:
 	$(IPROG) print-custom-templates $(DESTDIR)$(LIBEXECDIR)
 	$(IPROG) backup-sr-metadata.py $(DESTDIR)$(LIBEXECDIR)
 	$(IPROG) restore-sr-metadata.py $(DESTDIR)$(LIBEXECDIR)
-	$(IPROG) probe-device-for-file $(DESTDIR)$(LIBEXECDIR)
 	$(IPROG) backup-metadata-cron $(DESTDIR)$(LIBEXECDIR)
 	$(IPROG) pbis-force-domain-leave $(DESTDIR)$(LIBEXECDIR)
 	mkdir -p $(DESTDIR)/etc/sysconfig
@@ -178,7 +177,7 @@ endif
 # poweron
 	$(IPROG) poweron/wlan.py $(DESTDIR)$(PLUGINDIR)/wlan.py
 	$(IPROG) poweron/wlan.py $(DESTDIR)$(PLUGINDIR)/wake-on-lan
-	$(IPROG) poweron/DRAC.py $(DESTDIR)$(PLUGINDIR)/DRAC.py
+	$(IPROG) poweron/IPMI.py $(DESTDIR)$(PLUGINDIR)/IPMI.py
 	$(IPROG) poweron/power-on.py $(DESTDIR)$(PLUGINDIR)/power-on-host
 # YUM plugins
 	$(IPROG) yum-plugins/accesstoken.py $(DESTDIR)$(YUMPLUGINDIR)

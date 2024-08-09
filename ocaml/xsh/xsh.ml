@@ -19,7 +19,7 @@ open D
 type endpoint = {
     fdin: Unix.file_descr
   ; fdout: Unix.file_descr
-  ; mutable buffer: bytes
+  ; buffer: bytes
   ; mutable buffer_len: int
 }
 
@@ -100,7 +100,11 @@ let _ =
   let host = Sys.argv.(1) in
   let cmd = Sys.argv.(2) in
   let session =
-    try Sys.getenv "XSH_SESSION" with _ -> failwith "Session not provided"
+    match Sys.getenv_opt "XSH_SESSION" with
+    | Some x ->
+        x
+    | None ->
+        failwith "Session not provided"
   in
   let args =
     List.map

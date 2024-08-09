@@ -298,7 +298,8 @@ let make_pool ~__context ~master ?(name_label = "") ?(name_description = "")
     ?(telemetry_uuid = Ref.null) ?(telemetry_frequency = `weekly)
     ?(telemetry_next_collection = API.Date.never)
     ?(last_update_sync = API.Date.epoch) ?(update_sync_frequency = `daily)
-    ?(update_sync_day = 0L) ?(update_sync_enabled = false) () =
+    ?(update_sync_day = 0L) ?(update_sync_enabled = false)
+    ?(recommendations = []) () =
   let pool_ref = Ref.make () in
   Db.Pool.create ~__context ~ref:pool_ref ~uuid:(make_uuid ()) ~name_label
     ~name_description ~master ~default_SR ~suspend_image_SR ~crash_dump_SR
@@ -316,7 +317,7 @@ let make_pool ~__context ~master ?(name_label = "") ?(name_description = "")
     ~migration_compression ~coordinator_bias ~telemetry_uuid
     ~telemetry_frequency ~telemetry_next_collection ~last_update_sync
     ~local_auth_max_threads:8L ~ext_auth_max_threads:8L ~update_sync_frequency
-    ~update_sync_day ~update_sync_enabled ;
+    ~update_sync_day ~update_sync_enabled ~recommendations ;
   pool_ref
 
 let default_sm_features =
@@ -526,27 +527,6 @@ let make_session ~__context ?(ref = Ref.make ()) ?(uuid = make_uuid ())
     ~client_certificate ;
   ref
 
-(** Returns a [(rpc, session_id)] pair that can be passed to the
-    functions within the [Client] module to make XenAPI calls. The
-    calls can only succeed if they get forwarded to the local host
-    by the message forwarding layer. Forwarding to slaves does not
-    work in unit tests. *)
-let make_client_params ~__context =
-  let req = Xmlrpc_client.xmlrpc ~version:"1.1" "/" in
-  let rpc = Api_server.Server.dispatch_call req Unix.stdout in
-  let session_id =
-    let session_id = Ref.make () in
-    let now = Xapi_stdext_date.Date.of_float (Unix.time ()) in
-    let (_ : _ API.Ref.t) =
-      make_session ~__context ~ref:session_id
-        ~this_host:(Helpers.get_localhost ~__context)
-        ~last_active:now ~is_local_superuser:true ~validation_time:now
-        ~auth_user_name:"root" ~originator:"test" ()
-    in
-    session_id
-  in
-  (rpc, session_id)
-
 let create_physical_pif ~__context ~host ?network ?(bridge = "xapi0")
     ?(managed = true) () =
   let network =
@@ -674,4 +654,11 @@ let make_observer ~__context ?(ref = Ref.make ()) ?(uuid = make_uuid ())
     ?(attributes = []) ?(endpoints = []) ?(components = []) () =
   Db.Observer.create ~__context ~ref ~uuid ~name_label ~name_description ~hosts
     ~attributes ~endpoints ~components ~enabled ;
+  ref
+
+let make_vm_group ~__context ?(ref = Ref.make ()) ?(uuid = make_uuid ())
+    ?(name_label = "vm_group") ?(name_description = "") ?(placement = `normal)
+    () =
+  Db.VM_group.create ~__context ~ref ~uuid ~name_label ~name_description
+    ~placement ;
   ref

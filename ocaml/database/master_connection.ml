@@ -71,7 +71,7 @@ let force_connection_reset () =
        		   host and port are fixed values. *)
     let rec purge_stunnels verify_cert =
       match
-        Stunnel_cache.with_remove ~host ~port verify_cert @@ fun st ->
+        Stunnel_cache.with_remove ~host ~port @@ fun st ->
         try Stunnel.disconnect ~wait:false ~force:true st with _ -> ()
       with
       | None ->
@@ -271,7 +271,7 @@ let do_db_xml_rpc_persistent_with_reopen ~host:_ ~path (req : string) :
           !Db_globs.permanent_master_failure_retry_interval ;
         Thread.delay !Db_globs.permanent_master_failure_retry_interval ;
         !Db_globs.restart_fn ()
-    | e -> (
+    | e ->
         error "Caught %s" (Printexc.to_string e) ;
         (* RPC failed - there's no way we can recover from this so try reopening connection every 2s + backoff delay *)
         ( match !my_connection with
@@ -322,9 +322,7 @@ let do_db_xml_rpc_persistent_with_reopen ~host:_ ~path (req : string) :
           debug "%s: Sleep interrupted, retrying master connection now"
             __FUNCTION__ ;
         update_backoff_delay () ;
-        try open_secure_connection () with _ -> ()
-        (* oh well, maybe nextime... *)
-      )
+        D.log_and_ignore_exn open_secure_connection
   done ;
   !result
 

@@ -165,10 +165,11 @@ let track_http_operation ?use_existing_task ?(progress_bar = false) fd rpc
           debug "result was [%s]" result ;
           result
         ) else
-          let params =
-            Client.Task.get_error_info ~rpc ~session_id ~self:task_id
-          in
-          raise (Api_errors.Server_error (List.hd params, List.tl params))
+          match Client.Task.get_error_info ~rpc ~session_id ~self:task_id with
+          | [] ->
+              raise Api_errors.(Server_error (internal_error, []))
+          | err :: params ->
+              raise Api_errors.(Server_error (err, params))
       else (
         debug "client-side reports failure" ;
         (* Debug info might have been written into the task, let's see if there is some *)
@@ -180,13 +181,11 @@ let track_http_operation ?use_existing_task ?(progress_bar = false) fd rpc
         (* using this as an indicator that the handler never got the task. All handlers *)
         (* would need to use this mechanism if we want to check for it here. For now a  *)
         (* delay of 1 will do... *)
-        let params =
-          Client.Task.get_error_info ~rpc ~session_id ~self:task_id
-        in
-        if params = [] then
-          raise (Api_errors.Server_error (Api_errors.client_error, []))
-        else
-          raise (Api_errors.Server_error (List.hd params, List.tl params))
+        match Client.Task.get_error_info ~rpc ~session_id ~self:task_id with
+        | [] ->
+            raise Api_errors.(Server_error (client_error, []))
+        | err :: params ->
+            raise Api_errors.(Server_error (err, params))
       )
     )
     (fun () ->
@@ -254,31 +253,30 @@ let ref_convert x =
 
 (* Marshal an API-style server-error *)
 let get_server_error code params =
-  try
-    let error = Hashtbl.find Datamodel.errors code in
-    (* There ought to be a bijection between parameters mentioned in
-       datamodel.ml and those in the exception but this is unchecked and
-       false in some cases, defined here. *)
-    let required =
-      if code = Api_errors.vms_failed_to_cooperate then
-        List.map (fun _ -> "VM") params
-      else
-        error.Datamodel_types.err_params
-    in
-    (* For the rest we attempt to pretty-print the list even when it's short/long *)
-    let rec pp_params = function
-      | t :: ts, v :: vs ->
-          (t ^ ": " ^ v) :: pp_params (ts, vs)
-      | [], v :: vs ->
-          ("<extra>: " ^ v) :: pp_params ([], vs)
-      | t :: ts, [] ->
-          (t ^ ": <unknown>") :: pp_params (ts, [])
-      | [], [] ->
-          []
-    in
-    let errparams = pp_params (required, List.map ref_convert params) in
-    Some (error.Datamodel_types.err_doc, errparams)
-  with _ -> None
+  let ( let* ) = Option.bind in
+  let* error = Hashtbl.find_opt Datamodel.errors code in
+  (* There ought to be a bijection between parameters mentioned in
+     datamodel.ml and those in the exception but this is unchecked and
+     false in some cases, defined here. *)
+  let required =
+    if code = Api_errors.vms_failed_to_cooperate then
+      List.map (fun _ -> "VM") params
+    else
+      error.Datamodel_types.err_params
+  in
+  (* For the rest we attempt to pretty-print the list even when it's short/long *)
+  let rec pp_params = function
+    | t :: ts, v :: vs ->
+        (t ^ ": " ^ v) :: pp_params (ts, vs)
+    | [], v :: vs ->
+        ("<extra>: " ^ v) :: pp_params ([], vs)
+    | t :: ts, [] ->
+        (t ^ ": <unknown>") :: pp_params (ts, [])
+    | [], [] ->
+        []
+  in
+  let errparams = pp_params (required, List.map ref_convert params) in
+  Some (error.Datamodel_types.err_doc, errparams)
 
 let server_error (code : string) (params : string list) sock =
   match get_server_error code params with

@@ -27,6 +27,10 @@ module List : sig
   (** [drop n list] returns the list without the first [n] elements of [list]
       (or [] if list is shorter). *)
 
+  val last : 'a list -> 'a
+  (** [last l] returns the last element of a list or raise Invalid_argument if 
+    the list is empty *)
+
   val rev_mapi : (int -> 'a -> 'b) -> 'a list -> 'b list
   (** [rev_map f l] gives the same result as {!Stdlib.List.rev}[ (]
       {!Stdlib.List.mapi}[ f l)], but is tail-recursive and more efficient. *)
@@ -55,6 +59,13 @@ module List : sig
   (** [find_minimum cmp l] returns the lowest element in [l] according to
       the sort order of [cmp], or [None] if the list is empty. When two ore
       more elements match the lowest value, the left-most is returned. *)
+
+  val find_index : ('a -> bool) -> 'a list -> int option
+  (** [find_index f l] returns the position of the first element in [l] that
+      satisfies [f x]. If there is no such element, returns [None].
+
+      When using OCaml compilers 5.1 or later, please use the standard library
+      instead. *)
 
   (** {1 Using indices to manipulate lists} *)
 

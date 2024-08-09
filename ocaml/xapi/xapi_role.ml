@@ -47,12 +47,12 @@ let _ =
     (fun r -> Hashtbl.add static_role_by_name_label_tbl r.role_name_label r)
     get_all_static_roles
 
-let find_role_by_ref ref = Hashtbl.find static_role_by_ref_tbl ref
+let find_role_by_ref ref = Hashtbl.find_opt static_role_by_ref_tbl ref
 
-let find_role_by_uuid uuid = Hashtbl.find static_role_by_uuid_tbl uuid
+let find_role_by_uuid uuid = Hashtbl.find_opt static_role_by_uuid_tbl uuid
 
 let find_role_by_name_label name_label =
-  Hashtbl.find static_role_by_name_label_tbl name_label
+  Hashtbl.find_opt static_role_by_name_label_tbl name_label
 
 (*    val get_all : __context:Context.t -> ref_role_set*)
 let get_all ~__context =
@@ -64,13 +64,13 @@ let get_all ~__context =
 let is_valid_role ~__context ~role = Hashtbl.mem static_role_by_ref_tbl role
 
 let get_common ~__context ~self ~static_fn ~db_fn =
-  try
-    (* first look up across the static roles *)
-    let static_record = find_role_by_ref self in
-    static_fn static_record
-  with Not_found ->
-    (* then look up across the roles in the Db *)
-    db_fn ~__context ~self
+  match find_role_by_ref self with
+  (* first look up across the static roles *)
+  | Some static_record ->
+      static_fn static_record
+  | None ->
+      (* then look up across the roles in the Db *)
+      db_fn ~__context ~self
 
 (*    val get_record : __context:Context.t -> self:ref_role -> role_t*)
 let get_api_record ~static_record =
@@ -92,25 +92,26 @@ let get_record ~__context ~self =
     ~static_fn:(fun static_record -> get_api_record ~static_record)
     ~db_fn:(fun ~__context ~self -> Db.Role.get_record ~__context ~self)
 
-(*    val get_all_records_where : __context:Context.t -> expr:string -> ref_role_to_role_t_map*)
 let expr_no_permissions = "subroles<>[]"
 
 let expr_only_permissions = "subroles=[]"
 
-let get_all_records_where ~__context ~expr =
+let get_common_where ~__context ~expr ~f =
   if expr = expr_no_permissions then (* composite role, ie. not a permission *)
-    List.map
-      (fun r -> (ref_of_role ~role:r, get_api_record ~static_record:r))
-      Rbac_static.all_static_roles
+    List.map f Rbac_static.all_static_roles
   else if expr = expr_only_permissions then
     (* composite role, ie. a permission *)
-    List.map
-      (fun r -> (ref_of_role ~role:r, get_api_record ~static_record:r))
-      Rbac_static.all_static_permissions
+    List.map f Rbac_static.all_static_permissions
   else (* anything in this table, ie. roles+permissions *)
-    List.map
-      (fun r -> (ref_of_role ~role:r, get_api_record ~static_record:r))
-      get_all_static_roles
+    List.map f get_all_static_roles
+
+let get_all_where ~__context ~expr =
+  let f r = ref_of_role ~role:r in
+  get_common_where ~__context ~expr ~f
+
+let get_all_records_where ~__context ~expr =
+  let f r = (ref_of_role ~role:r, get_api_record ~static_record:r) in
+  get_common_where ~__context ~expr ~f
 
 (*@ (* concatenate with Db table *)
   			(* TODO: this line is crashing for some unknown reason, but not needed in RBAC 1 *)
@@ -121,20 +122,20 @@ let get_all_records ~__context = get_all_records_where ~__context ~expr:"True"
 
 (*    val get_by_uuid : __context:Context.t -> uuid:string -> ref_role*)
 let get_by_uuid ~__context ~uuid =
-  try
-    let static_record = find_role_by_uuid uuid in
-    ref_of_role ~role:static_record
-  with Not_found ->
-    (* pass-through to Db *)
-    Db.Role.get_by_uuid ~__context ~uuid
+  match find_role_by_uuid uuid with
+  | Some static_record ->
+      ref_of_role ~role:static_record
+  | None ->
+      (* pass-through to Db *)
+      Db.Role.get_by_uuid ~__context ~uuid
 
 let get_by_name_label ~__context ~label =
-  try
-    let static_record = find_role_by_name_label label in
-    [ref_of_role ~role:static_record]
-  with Not_found ->
-    (* pass-through to Db *)
-    Db.Role.get_by_name_label ~__context ~label
+  match find_role_by_name_label label with
+  | Some static_record ->
+      [ref_of_role ~role:static_record]
+  | None ->
+      (* pass-through to Db *)
+      Db.Role.get_by_name_label ~__context ~label
 
 (*    val get_uuid : __context:Context.t -> self:ref_role -> string*)
 let get_uuid ~__context ~self =
@@ -193,7 +194,7 @@ let get_is_internal ~__context ~self =
 let get_permissions_common ~__context ~role ~ret_value_fn =
   let rec rec_get_permissions_of_role ~__context ~role =
     let subroles = get_subroles ~__context ~self:role in
-    if List.length subroles = 0 then
+    if subroles = [] then
       (* base case = leaf node = permission is role itself *)
       [ret_value_fn role]
     else (* step = go recursively down composite roles *)
@@ -233,7 +234,7 @@ let get_by_permission ~__context ~permission =
 let get_by_permission_name_label ~__context ~label =
   let permission =
     let ps = get_by_name_label ~__context ~label in
-    if List.length ps > 0 then
+    if ps <> [] then
       List.hd ps (* names are unique, there's either 0 or 1*)
     else
       Ref.null

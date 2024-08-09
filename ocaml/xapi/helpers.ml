@@ -42,21 +42,15 @@ let log_exn_continue msg f x =
 type log_output = Always | Never | On_failure
 
 let filter_patterns =
-  [
-    ( Re.Str.regexp "^\\(.*proxy_\\(username\\|password\\)=\\)\\(.*\\)$"
-    , "\\1(filtered)"
-    )
-  ]
+  [(Re.Pcre.regexp "^(.*proxy_(username|password)=)(.*)$", "(filtered)")]
 
 let filter_args args =
   List.map
     (fun arg ->
       List.fold_left
         (fun acc (r, t) ->
-          if Re.Str.string_match r acc 0 then
-            Re.Str.replace_matched t acc
-          else
-            acc
+          try String.concat "" [(Re.Pcre.extract ~rex:r acc).(1); t]
+          with Not_found -> acc
         )
         arg filter_patterns
     )
@@ -85,7 +79,11 @@ let call_script ?(log_output = Always) ?env ?stdin ?timeout script args =
     Unix.access script [Unix.X_OK] ;
     (* Use the same $PATH as xapi *)
     let env =
-      match env with None -> [|"PATH=" ^ Sys.getenv "PATH"|] | Some env -> env
+      match env with
+      | None ->
+          [|"PATH=" ^ Option.value (Sys.getenv_opt "PATH") ~default:""|]
+      | Some env ->
+          env
     in
     let output, _ =
       match stdin with
@@ -546,6 +544,7 @@ let call_api_functions_internal ~__context f =
     )
 
 let call_api_functions ~__context f =
+  Context.with_tracing ~__context __FUNCTION__ @@ fun __context ->
   match Context.get_test_rpc __context with
   | Some rpc ->
       f rpc (Ref.of_string "fake_session")
@@ -1110,31 +1109,55 @@ let assert_is_valid_ip kind field address =
   if not (is_valid_ip kind address) then
     raise Api_errors.(Server_error (invalid_ip_address_specified, [field]))
 
+module type AbstractIpaddr = sig
+  type t
+
+  module Prefix : sig
+    type addr = t
+
+    type t
+
+    val of_string : string -> (t, [> `Msg of string]) result
+
+    val address : t -> addr
+
+    val bits : t -> int
+  end
+
+  val to_string : t -> string
+end
+
 let parse_cidr kind cidr =
-  try
-    let address, prefixlen = Scanf.sscanf cidr "%s@/%d" (fun a p -> (a, p)) in
-    if not (is_valid_ip kind address) then (
-      error "Invalid address in CIDR (%s)" address ;
-      None
-    ) else if
-        prefixlen < 0
-        || (kind = `ipv4 && prefixlen > 32)
-        || (kind = `ipv6 && prefixlen > 128)
-      then (
-      error "Invalid prefix length in CIDR (%d)" prefixlen ;
-      None
-    ) else
+  let select_ip_family = function
+    | `ipv4 ->
+        (module Ipaddr.V4 : AbstractIpaddr)
+    | `ipv6 ->
+        (module Ipaddr.V6)
+  in
+  let module AddrParse = (val select_ip_family kind) in
+  match AddrParse.Prefix.of_string cidr with
+  | Ok ip_t ->
+      let address = AddrParse.Prefix.address ip_t |> AddrParse.to_string in
+      let prefixlen = AddrParse.Prefix.bits ip_t in
       Some (address, prefixlen)
-  with _ ->
-    error "Invalid CIDR format (%s)" cidr ;
-    None
+  | Error e ->
+      let msg = match e with `Msg str -> str in
+      error "Invalid address in CIDR (%s). %s" cidr msg ;
+      None
+
+let valid_cidr_aux kind cidr =
+  match kind with
+  | `ipv4or6 ->
+      parse_cidr `ipv4 cidr = None && parse_cidr `ipv6 cidr = None
+  | (`ipv4 | `ipv6) as kind ->
+      parse_cidr kind cidr = None
 
 let assert_is_valid_cidr kind field cidr =
-  if parse_cidr kind cidr = None then
+  if valid_cidr_aux kind cidr then
     raise Api_errors.(Server_error (invalid_cidr_address_specified, [field]))
 
 let assert_is_valid_ip_addr kind field address =
-  if (not (is_valid_ip kind address)) && parse_cidr kind address = None then
+  if (not (is_valid_ip kind address)) && valid_cidr_aux kind address then
     raise Api_errors.(Server_error (invalid_ip_address_specified, [field]))
 
 (** Return true if the MAC is in the right format XX:XX:XX:XX:XX:XX *)
@@ -1192,7 +1215,7 @@ let gethostbyname_family host family =
     Unix.getaddrinfo host ""
       [Unix.AI_SOCKTYPE Unix.SOCK_STREAM; Unix.AI_FAMILY family]
   in
-  if List.length he = 0 then
+  if he = [] then
     throw_resolve_error () ;
   Unix.string_of_inet_addr (getaddr (List.hd he).Unix.ai_addr)
 
@@ -1568,9 +1591,12 @@ module Early_wakeup = struct
   let signal key =
     (*debug "Early_wakeup signal key = (%s, %s)" a b;*)
     with_lock table_m (fun () ->
-        if Hashtbl.mem table key then
-          (*debug "Signalling thread blocked on (%s,%s)" a b;*)
-          Delay.signal (Hashtbl.find table key)
+        Option.iter
+          (fun x ->
+            (*debug "Signalling thread blocked on (%s,%s)" a b;*)
+            Delay.signal x
+          )
+          (Hashtbl.find_opt table key)
     )
 end
 
@@ -1733,6 +1759,7 @@ module Task : sig
 end = struct
   (* can't place these functions in task helpers due to circular dependencies *)
   let wait_for_ ~__context ~tasks ~propagate_cancel cb =
+    Context.with_tracing ~__context __FUNCTION__ @@ fun __context ->
     let our_task = Context.get_task_id __context in
     let classes =
       List.map
@@ -1819,6 +1846,7 @@ end = struct
     wait_for_ ~__context ~tasks:[t] mirror
 
   let to_result ~__context ~of_rpc ~t =
+    Context.with_tracing ~__context __FUNCTION__ @@ fun __context ->
     wait_for_mirror ~__context ~propagate_cancel:true ~t ;
     let fail msg =
       raise

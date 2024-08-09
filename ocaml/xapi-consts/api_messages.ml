@@ -311,6 +311,8 @@ let cluster_host_leaving = addMessage "CLUSTER_HOST_LEAVING" 3L
 
 let cluster_host_joining = addMessage "CLUSTER_HOST_JOINING" 4L
 
+let cluster_stack_out_of_date = addMessage "CLUSTER_STACK_OUT_OF_DATE" 3L
+
 (* Certificate expiration messages *)
 let host_server_certificate_expiring = "HOST_SERVER_CERTIFICATE_EXPIRING"
 
@@ -365,3 +367,6 @@ let periodic_update_sync_failed = addMessage "PERIODIC_UPDATE_SYNC_FAILED" 3L
 
 let xapi_startup_blocked_as_version_higher_than_coordinator =
   addMessage "XAPI_STARTUP_BLOCKED_AS_VERSION_HIGHER_THAN_COORDINATOR" 2L
+
+let all_running_vms_in_anti_affinity_grp_on_single_host =
+  addMessage "ALL_RUNNING_VMS_IN_ANTI_AFFINITY_GRP_ON_SINGLE_HOST" 3L

@@ -41,6 +41,10 @@ open D
 
 module E = Debug.Make (struct let name = "http_internal_errors" end)
 
+let ( let* ) = Option.bind
+
+let ( let@ ) f x = f x
+
 type uri_path = string
 
 module Stats = struct
@@ -99,6 +103,7 @@ let response_of_request req hdrs =
 
 let response_fct req ?(hdrs = []) s (response_length : int64)
     (write_response_to_fd_fn : Unix.file_descr -> unit) =
+  let@ req = Http.Request.with_tracing ~name:__FUNCTION__ req in
   let res =
     {
       (response_of_request req hdrs) with
@@ -296,10 +301,7 @@ module Server = struct
 
   let add_handler x ty uri handler =
     let existing =
-      if MethodMap.mem ty x.handlers then
-        MethodMap.find ty x.handlers
-      else
-        Radix_tree.empty
+      Option.value (MethodMap.find_opt ty x.handlers) ~default:Radix_tree.empty
     in
     x.handlers <-
       MethodMap.add ty
@@ -307,11 +309,9 @@ module Server = struct
         x.handlers
 
   let find_stats x m uri =
-    if not (MethodMap.mem m x.handlers) then
-      None
-    else
-      let rt = MethodMap.find m x.handlers in
-      Option.map (fun te -> te.TE.stats) (Radix_tree.longest_prefix uri rt)
+    let* rt = MethodMap.find_opt m x.handlers in
+    let* te = Radix_tree.longest_prefix uri rt in
+    Some te.TE.stats
 
   let all_stats x =
     let open Radix_tree in
@@ -359,11 +359,13 @@ let request_of_bio_exn ~proxy_seen ~read_timeout ~total_timeout ~max_length bio
     proxy |> Option.fold ~none:[] ~some:(fun p -> [("STUNNEL_PROXY", p)])
   in
   let open Http.Request in
-  (* Below transformation only keeps one value per key, whereas
-     a fully compliant implementation following Uri's interface
-     would operate on list of values for each key instead *)
   let kvlist_flatten ls =
-    List.map (function k, v :: _ -> (k, v) | k, [] -> (k, "")) ls
+    (* Uri.query splits the value string into several if they are separated
+       with commas. Like this: "?k=v1,v2,v3" -> [("k", ["v1";"v2";"v3"])]
+       This function concatenates these back. It will not concatenate values
+       entered for duplicate keys, as these will be separate tuples:
+       "?k=v1,v2,v3&k=v4" ->  [("k", ["v1"; "v2"; "v3"]); ("k", ["v4"])] *)
+    List.map (fun (k, vs) -> (k, Astring.String.concat ~sep:"," vs)) ls
   in
   let request =
     Astring.String.cuts ~sep:"\n" headers
@@ -375,7 +377,7 @@ let request_of_bio_exn ~proxy_seen ~read_timeout ~total_timeout ~max_length bio
                  (* Request-Line   = Method SP Request-URI SP HTTP-Version CRLF *)
                  let uri_t = Uri.of_string uri in
                  if uri_t = Uri.empty then raise Http_parse_failure ;
-                 let uri = Uri.path uri_t in
+                 let uri = Uri.path_unencoded uri_t in
                  let query = Uri.query uri_t |> kvlist_flatten in
                  let m = Http.method_t_of_string meth in
                  let version =
@@ -398,7 +400,7 @@ let request_of_bio_exn ~proxy_seen ~read_timeout ~total_timeout ~max_length bio
                    | k when k = Http.Hdr.content_length ->
                        {req with content_length= Some (Int64.of_string v)}
                    | k when k = Http.Hdr.cookie ->
-                       {req with cookie= Http.parse_keyvalpairs v}
+                       {req with cookie= Http.parse_cookies v}
                    | k when k = Http.Hdr.transfer_encoding ->
                        {req with transfer_encoding= Some v}
                    | k when k = Http.Hdr.accept ->
@@ -442,8 +444,27 @@ let request_of_bio_exn ~proxy_seen ~read_timeout ~total_timeout ~max_length bio
     	already sent back a suitable error code and response to the client. *)
 let request_of_bio ?proxy_seen ~read_timeout ~total_timeout ~max_length ic =
   try
+    let tracer = Tracing.Tracer.get_tracer ~name:"http_tracer" in
+    let loop_span =
+      match Tracing.Tracer.start ~tracer ~name:__FUNCTION__ ~parent:None () with
+      | Ok span ->
+          span
+      | Error _ ->
+          None
+    in
     let r, proxy =
       request_of_bio_exn ~proxy_seen ~read_timeout ~total_timeout ~max_length ic
+    in
+    let parent_span = Http.Request.traceparent_of r in
+    let loop_span =
+      Option.fold ~none:None
+        ~some:(fun span ->
+          Tracing.Tracer.update_span_with_parent span parent_span
+        )
+        loop_span
+    in
+    let _ : (Tracing.Span.t option, exn) result =
+      Tracing.Tracer.finish loop_span
     in
     (Some r, proxy)
   with e ->
@@ -487,6 +508,8 @@ let request_of_bio ?proxy_seen ~read_timeout ~total_timeout ~max_length ic =
     (None, None)
 
 let handle_one (x : 'a Server.t) ss context req =
+  let@ req = Http.Request.with_tracing ~name:__FUNCTION__ req in
+  let span = Http.Request.traceparent_of req in
   let ic = Buf_io.of_fd ss in
   let finished = ref false in
   try
@@ -500,6 +523,7 @@ let handle_one (x : 'a Server.t) ss context req =
       Option.value ~default:empty
         (Radix_tree.longest_prefix req.Request.uri method_map)
     in
+    let@ _ = Tracing.with_child_trace span ~name:"handler" in
     ( match te.TE.handler with
     | BufIO handlerfn ->
         handlerfn req ic context
@@ -562,6 +586,7 @@ let handle_connection ~header_read_timeout ~header_total_timeout
       request_of_bio ?proxy_seen ~read_timeout ~total_timeout
         ~max_length:max_header_length ic
     in
+
     (* 2. now we attempt to process the request *)
     let finished =
       Option.fold ~none:true
@@ -660,8 +685,11 @@ exception Socket_not_found
 (* Stop an HTTP server running on a socket *)
 let stop (socket, _name) =
   let server =
-    try Hashtbl.find socket_table socket
-    with Not_found -> raise Socket_not_found
+    match Hashtbl.find_opt socket_table socket with
+    | Some x ->
+        x
+    | None ->
+        raise Socket_not_found
   in
   Hashtbl.remove socket_table socket ;
   server.Server_io.shutdown ()

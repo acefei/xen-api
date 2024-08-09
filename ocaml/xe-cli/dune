@@ -5,11 +5,14 @@
   (package xe)
   (libraries
     astring
-    dune-build-info
+    
     fpath
     safe-resources
     stunnel
     threads
+    tracing
+    uri
+    yojson
     xapi-backtrace
     xapi-cli-protocol
     xapi-stdext-pervasives

@@ -24,13 +24,13 @@ open D
 let archive_sr_rrd (sr_uuid : string) : string =
   let sr_rrd =
     with_lock mutex (fun () ->
-        try
-          let rrd = Hashtbl.find sr_rrds sr_uuid in
-          Hashtbl.remove sr_rrds sr_uuid ;
-          rrd
-        with Not_found ->
-          let msg = Printf.sprintf "No RRD found for SR: %s." sr_uuid in
-          raise (Rrdd_error (Archive_failed msg))
+        match Hashtbl.find_opt sr_rrds sr_uuid with
+        | Some rrd ->
+            Hashtbl.remove sr_rrds sr_uuid ;
+            rrd
+        | None ->
+            let msg = Printf.sprintf "No RRD found for SR: %s." sr_uuid in
+            raise (Rrdd_error (Archive_failed msg))
     )
   in
   try
@@ -85,11 +85,13 @@ let archive_rrd vm_uuid (remote_address : string option) : unit =
       remote_address
   in
   with_lock mutex (fun () ->
-      try
-        let rrd = (Hashtbl.find vm_rrds vm_uuid).rrd in
-        Hashtbl.remove vm_rrds vm_uuid ;
-        archive_rrd_internal ~transport ~uuid:vm_uuid ~rrd ()
-      with Not_found -> ()
+      match Hashtbl.find_opt vm_rrds vm_uuid with
+      | Some x ->
+          let rrd = x.rrd in
+          Hashtbl.remove vm_rrds vm_uuid ;
+          archive_rrd_internal ~transport ~uuid:vm_uuid ~rrd ()
+      | None ->
+          ()
   )
 
 (** This functionality is used by xapi to backup rrds to local disk or to the
@@ -294,29 +296,27 @@ let remove_rrd (uuid : string) : unit =
    is assumed to be valid, since it is set by monitor_master. *)
 let migrate_rrd (session_id : string option) (remote_address : string)
     (vm_uuid : string) (host_uuid : string) : unit =
-  try
-    let rrdi =
-      with_lock mutex (fun () ->
-          let rrdi = Hashtbl.find vm_rrds vm_uuid in
+  with_lock mutex (fun () ->
+      match Hashtbl.find_opt vm_rrds vm_uuid with
+      | Some x ->
           debug "Sending RRD for VM uuid=%s to remote host %s for migrate"
             vm_uuid host_uuid ;
           Hashtbl.remove vm_rrds vm_uuid ;
-          rrdi
-      )
-    in
-    let transport =
-      Xmlrpc_client.(
-        SSL (SSL.make ~verify_cert:None (), remote_address, !https_port)
-      )
-    in
-    send_rrd ?session_id ~transport ~to_archive:false ~uuid:vm_uuid
-      ~rrd:rrdi.rrd ()
-  with
-  | Not_found ->
-      debug "VM %s RRDs not found on migrate! Continuing anyway..." vm_uuid ;
-      log_backtrace ()
-  | _ ->
-      log_backtrace ()
+          Some x
+      | None ->
+          debug "VM %s RRDs not found on migrate! Continuing anyway..." vm_uuid ;
+          log_backtrace () ;
+          None
+  )
+  |> Option.iter (fun rrdi ->
+         let transport =
+           Xmlrpc_client.(
+             SSL (SSL.make ~verify_cert:None (), remote_address, !https_port)
+           )
+         in
+         send_rrd ?session_id ~transport ~to_archive:false ~uuid:vm_uuid
+           ~rrd:rrdi.rrd ()
+     )
 
 (* Called on host shutdown/reboot to send the Host RRD to the master for backup.
    Note all VMs will have been shutdown by now. *)
@@ -457,8 +457,8 @@ let query_host_ds (ds_name : string) : float =
   )
 
 (** Dump all latest data of host dss to file in json format so that any client
-    can read even if it's non-privileged user, such as NRPE. 
-    Especially, nan, infinity and neg_infinity will be converted to strings 
+    can read even if it's non-privileged user, such as NRPE.
+    Especially, nan, infinity and neg_infinity will be converted to strings
     "NaN", "infinity" and "-infinity", the client needs to handle by itself.
     *)
 let convert_value x =
@@ -651,8 +651,7 @@ module Plugin = struct
          - Can the code for backwards compatibility be expunged? *)
 
       type plugin = {
-          info: P.info
-        ; reader: Rrd_reader.reader
+          reader: Rrd_reader.reader
         ; mutable skip_init: int  (** initial value for skip after read err *)
         ; mutable skip: int  (** number of cycles to skip b/f next read *)
       }
@@ -748,7 +747,7 @@ module Plugin = struct
               let reader =
                 P.make_reader ~uid ~info ~protocol:(choose_protocol protocol)
               in
-              Hashtbl.add registered uid {info; reader; skip_init= 1; skip= 0}
+              Hashtbl.add registered uid {reader; skip_init= 1; skip= 0}
         ) ;
         next_reading uid
 
@@ -756,11 +755,12 @@ module Plugin = struct
          process its output at most once more. *)
       let deregister (uid : P.uid) : unit =
         with_lock registered_m (fun _ ->
-            if Hashtbl.mem registered uid then (
-              let plugin = Hashtbl.find registered uid in
-              plugin.reader.Rrd_reader.cleanup () ;
-              Hashtbl.remove registered uid
-            )
+            Option.iter
+              (fun plugin ->
+                plugin.reader.Rrd_reader.cleanup () ;
+                Hashtbl.remove registered uid
+              )
+              (Hashtbl.find_opt registered uid)
         )
 
       (* Read, parse, and combine metrics from all registered plugins. *)
